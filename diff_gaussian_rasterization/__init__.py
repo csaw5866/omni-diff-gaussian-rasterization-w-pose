@@ -96,7 +96,7 @@ class _RasterizeGaussians(torch.autograd.Function):
             cpu_args = cpu_deep_copy_tuple(args)
             try:
                 if raster_settings.spherical:
-                    num_rendered, color, depth, norm, alpha, radii, extra, geomBuffer, binningBuffer, imgBuffer = _C.rasterize_spherical_gaussians(
+                    num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer, depth, opacity, n_touched = _C.rasterize_spherical_gaussians(
                         *args)
                 else:
                     num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer, depth, opacity, n_touched = _C.rasterize_gaussians(
@@ -108,7 +108,7 @@ class _RasterizeGaussians(torch.autograd.Function):
                 raise ex
         else:
             if raster_settings.spherical:
-                num_rendered, color, depth, norm, alpha, radii, extra, geomBuffer, binningBuffer, imgBuffer = _C.rasterize_spherical_gaussians(
+                num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer, depth, opacity, n_touched = _C.rasterize_spherical_gaussians(
                     *args)
             else:
                 num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer, depth, opacity, n_touched = _C.rasterize_gaussians(
@@ -160,7 +160,7 @@ class _RasterizeGaussians(torch.autograd.Function):
             cpu_args = cpu_deep_copy_tuple(args)
             try:
                 if raster_settings.spherical:
-                    grad_means2D, grad_colors_precomp, grad_opacities, grad_means3D, grad_cov3Ds_precomp, grad_norm3Ds_precomp, grad_sh, grad_scales, grad_rotations, grad_extra_attrs = _C.rasterize_spherical_gaussians_backward(
+                    grad_means2D, grad_colors_precomp, grad_opacities, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations, grad_tau = _C.rasterize_spherical_gaussians_backward(
                         *args)
                 else:
                     grad_means2D, grad_colors_precomp, grad_opacities, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations, grad_tau = _C.rasterize_gaussians_backward(
@@ -172,7 +172,7 @@ class _RasterizeGaussians(torch.autograd.Function):
                 raise ex
         else:
             if raster_settings.spherical:
-                grad_means2D, grad_colors_precomp, grad_opacities, grad_means3D, grad_cov3Ds_precomp, grad_norm3Ds_precomp, grad_sh, grad_scales, grad_rotations, grad_extra_attrs = _C.rasterize_spherical_gaussians_backward(
+                grad_means2D, grad_colors_precomp, grad_opacities, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations, grad_tau = _C.rasterize_spherical_gaussians_backward(
                     *args)
             else:
                 grad_means2D, grad_colors_precomp, grad_opacities, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations, grad_tau = _C.rasterize_gaussians_backward(

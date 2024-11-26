@@ -306,7 +306,6 @@ __global__ void preprocesssphericalCUDA(int P, int D, int M,
 										const float *shs,
 										bool *clamped,
 										const float *cov3D_precomp,
-										const float *norm3Ds_precomp,
 										const float *colors_precomp,
 										const float *viewmatrix,
 										const float *projmatrix,
@@ -318,7 +317,6 @@ __global__ void preprocesssphericalCUDA(int P, int D, int M,
 										float2 *points_xy_image,
 										float *depths,
 										float *cov3Ds,
-										float *norm3Ds,
 										float *rgb,
 										float4 *conic_opacity,
 										const dim3 grid,
@@ -354,16 +352,6 @@ __global__ void preprocesssphericalCUDA(int P, int D, int M,
 		computeCov3D(scales[idx], scale_modifier, rotations[idx], cov3Ds + idx * 6);
 		cov3D = cov3Ds + idx * 6;
 	}
-	const float *norm3D;
-	if (norm3Ds_precomp != nullptr)
-	{
-		norm3D = norm3Ds_precomp + idx * 3;
-	}
-	else
-	{
-		computeNorm3D(scales[idx], scale_modifier, rotations[idx], norm3Ds + idx * 3, idx, (glm::vec3 *)orig_points, *cam_pos);
-		norm3D = norm3Ds + idx * 3;
-	}
 	// Compute 2D screen-space covariance matrix
 	float3 cov = computesphericalCov2D(p_orig, focal_x, focal_y, tan_fovx, tan_fovy, cov3D, viewmatrix);
 	// Invert covariance (EWA algorithm)
@@ -380,9 +368,7 @@ __global__ void preprocesssphericalCUDA(int P, int D, int M,
 	float mid = 0.5f * (cov.x + cov.z);
 	float lambda1 = mid + sqrt(max(0.1f, mid * mid - det));
 	float lambda2 = mid - sqrt(max(0.1f, mid * mid - det));
-
 	float my_radius = ceil(3.f * sqrt(max(lambda1, lambda2)));
-
 	float2 point_image = {ndc2Pix(p_proj.x, W), ndc2Pix(p_proj.y, H)};
 	uint2 rect_min, rect_max;
 	getRect(point_image, my_radius, rect_min, rect_max, grid);
@@ -642,8 +628,7 @@ void FORWARD::preprocessspherical(int P, int D, int M,
 								  const float *opacities,
 								  const float *shs,
 								  bool *clamped,
-								  const float *cov3Ds_precomp,
-								  const float *norm3Ds_precomp,
+								  const float *cov3D_precomp,
 								  const float *colors_precomp,
 								  const float *viewmatrix,
 								  const float *projmatrix,
@@ -655,7 +640,6 @@ void FORWARD::preprocessspherical(int P, int D, int M,
 								  float2 *means2D,
 								  float *depths,
 								  float *cov3Ds,
-								  float *norm3Ds,
 								  float *rgb,
 								  float4 *conic_opacity,
 								  const dim3 grid,
@@ -671,8 +655,7 @@ void FORWARD::preprocessspherical(int P, int D, int M,
 		opacities,
 		shs,
 		clamped,
-		cov3Ds_precomp,
-		norm3Ds_precomp,
+		cov3D_precomp,
 		colors_precomp,
 		viewmatrix,
 		projmatrix,
@@ -684,7 +667,6 @@ void FORWARD::preprocessspherical(int P, int D, int M,
 		means2D,
 		depths,
 		cov3Ds,
-		norm3Ds,
 		rgb,
 		conic_opacity,
 		grid,

@@ -38,7 +38,7 @@ RasterizeGaussiansCUDA(
 	const bool prefiltered,
 	const bool debug);
 
-std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeGaussiansSphericalCUDA(
 	const torch::Tensor &background,
 	const torch::Tensor &means3D,
@@ -47,12 +47,10 @@ RasterizeGaussiansSphericalCUDA(
 	const torch::Tensor &scales,
 	const torch::Tensor &rotations,
 	const float scale_modifier,
-	const torch::Tensor &cov3Ds_precomp,
-	const torch::Tensor &norm3Ds_precomp,
-	const torch::Tensor &extra_attrs,
-	const int attr_degree,
+	const torch::Tensor &cov3D_precomp,
 	const torch::Tensor &viewmatrix,
 	const torch::Tensor &projmatrix,
+	const torch::Tensor &projmatrix_raw,
 	const float tan_fovx,
 	const float tan_fovy,
 	const int image_height,
@@ -89,7 +87,7 @@ RasterizeGaussiansBackwardCUDA(
 	const torch::Tensor &imageBuffer,
 	const bool debug);
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeGaussiansBackwardSphericalCUDA(
 	const torch::Tensor &background,
 	const torch::Tensor &means3D,
@@ -97,19 +95,15 @@ RasterizeGaussiansBackwardSphericalCUDA(
 	const torch::Tensor &colors,
 	const torch::Tensor &scales,
 	const torch::Tensor &rotations,
-	const torch::Tensor &extra_attrs,
 	const float scale_modifier,
-	const torch::Tensor &cov3Ds_precomp,
-	const torch::Tensor &norm3Ds_precomp,
+	const torch::Tensor &cov3D_precomp,
 	const torch::Tensor &viewmatrix,
 	const torch::Tensor &projmatrix,
+	const torch::Tensor &projmatrix_raw,
 	const float tan_fovx,
 	const float tan_fovy,
 	const torch::Tensor &dL_dout_color,
 	const torch::Tensor &dL_dout_depth,
-	const torch::Tensor &dL_dout_norm,
-	const torch::Tensor &dL_dout_alpha,
-	const torch::Tensor &dL_dout_extra,
 	const torch::Tensor &sh,
 	const int degree,
 	const torch::Tensor &campos,
@@ -117,7 +111,6 @@ RasterizeGaussiansBackwardSphericalCUDA(
 	const int R,
 	const torch::Tensor &binningBuffer,
 	const torch::Tensor &imageBuffer,
-	const torch::Tensor &out_alpha,
 	const bool debug);
 
 torch::Tensor markVisible(

@@ -348,12 +348,13 @@ __global__ void computesphericalCov2DCUDA(int P,
 										  const float3 *means,
 										  const int *radii,
 										  const float *cov3Ds,
-										  const float h_x, const float h_y,
-										  const float tan_fovx, const float tan_fovy,
+										  const float h_x, float h_y,
+										  const float tan_fovx, float tan_fovy,
 										  const float *view_matrix,
 										  const float *dL_dconics,
 										  float3 *dL_dmeans,
-										  float *dL_dcov)
+										  float *dL_dcov,
+										  float *dL_dtau)
 {
 	auto idx = cg::this_grid().thread_rank();
 	if (idx >= P || !(radii[idx] > 0))
@@ -461,6 +462,25 @@ __global__ void computesphericalCov2DCUDA(int P,
 	float dL_dty = -h_y * tz2 * dL_dJ12;
 	float dL_dtz = -h_x * tz2 * dL_dJ00 - h_y * tz2 * dL_dJ11 + (2 * h_x * t.x) * tz3 * dL_dJ02 + (2 * h_y * t.y) * tz3 * dL_dJ12;
 
+	SE3 T_CW(view_matrix);
+	mat33 R = T_CW.R().data();
+	mat33 RT = R.transpose();
+	float3 t_ = T_CW.t();
+	mat33 dpC_drho = mat33::identity();
+	mat33 dpC_dtheta = -mat33::skew_symmetric(t);
+	float dL_dt[6];
+	for (int i = 0; i < 3; i++)
+	{
+		float3 c_rho = dpC_drho.cols[i];
+		float3 c_theta = dpC_dtheta.cols[i];
+		dL_dt[i] = dL_dtx * c_rho.x + dL_dty * c_rho.y + dL_dtz * c_rho.z;
+		dL_dt[i + 3] = dL_dtx * c_theta.x + dL_dty * c_theta.y + dL_dtz * c_theta.z;
+	}
+	for (int i = 0; i < 6; i++)
+	{
+		dL_dtau[6 * idx + i] += dL_dt[i];
+	}
+
 	// Account for transformation of mean to t
 	// t = transformPoint4x3(mean, view_matrix);
 	float3 dL_dmean = transformVec4x3Transpose({dL_dtx, dL_dty, dL_dtz}, view_matrix);
@@ -469,6 +489,52 @@ __global__ void computesphericalCov2DCUDA(int P,
 	// that is caused because the mean affects the covariance matrix.
 	// Additional mean gradient is accumulated in BACKWARD::preprocess.
 	dL_dmeans[idx] = dL_dmean;
+
+	float dL_dW00 = J[0][0] * dL_dT00;
+	float dL_dW01 = J[0][0] * dL_dT01;
+	float dL_dW02 = J[0][0] * dL_dT02;
+	float dL_dW10 = J[1][1] * dL_dT10;
+	float dL_dW11 = J[1][1] * dL_dT11;
+	float dL_dW12 = J[1][1] * dL_dT12;
+	float dL_dW20 = J[0][2] * dL_dT00 + J[1][2] * dL_dT10;
+	float dL_dW21 = J[0][2] * dL_dT01 + J[1][2] * dL_dT11;
+	float dL_dW22 = J[0][2] * dL_dT02 + J[1][2] * dL_dT12;
+
+	float3 c1 = R.cols[0];
+	float3 c2 = R.cols[1];
+	float3 c3 = R.cols[2];
+
+	float dL_dW_data[9];
+	dL_dW_data[0] = dL_dW00;
+	dL_dW_data[3] = dL_dW01;
+	dL_dW_data[6] = dL_dW02;
+	dL_dW_data[1] = dL_dW10;
+	dL_dW_data[4] = dL_dW11;
+	dL_dW_data[7] = dL_dW12;
+	dL_dW_data[2] = dL_dW20;
+	dL_dW_data[5] = dL_dW21;
+	dL_dW_data[8] = dL_dW22;
+
+	mat33 dL_dW(dL_dW_data);
+	float3 dL_dWc1 = dL_dW.cols[0];
+	float3 dL_dWc2 = dL_dW.cols[1];
+	float3 dL_dWc3 = dL_dW.cols[2];
+
+	mat33 n_W1_x = -mat33::skew_symmetric(c1);
+	mat33 n_W2_x = -mat33::skew_symmetric(c2);
+	mat33 n_W3_x = -mat33::skew_symmetric(c3);
+
+	float3 dL_dtheta = {};
+	dL_dtheta.x = dot(dL_dWc1, n_W1_x.cols[0]) + dot(dL_dWc2, n_W2_x.cols[0]) +
+				  dot(dL_dWc3, n_W3_x.cols[0]);
+	dL_dtheta.y = dot(dL_dWc1, n_W1_x.cols[1]) + dot(dL_dWc2, n_W2_x.cols[1]) +
+				  dot(dL_dWc3, n_W3_x.cols[1]);
+	dL_dtheta.z = dot(dL_dWc1, n_W1_x.cols[2]) + dot(dL_dWc2, n_W2_x.cols[2]) +
+				  dot(dL_dWc3, n_W3_x.cols[2]);
+
+	dL_dtau[6 * idx + 3] += dL_dtheta.x;
+	dL_dtau[6 * idx + 4] += dL_dtheta.y;
+	dL_dtau[6 * idx + 5] += dL_dtheta.z;
 }
 
 // Backward pass for the conversion of scale and rotation to a
@@ -672,24 +738,23 @@ __global__ void preprocesssphericalCUDA(
 	const float3 *means,
 	const int *radii,
 	const float *shs,
-	const glm::vec3 *norm3Ds,
-	bool is_norm3Ds_precomp,
 	const bool *clamped,
 	const glm::vec3 *scales,
 	const glm::vec4 *rotations,
 	const float scale_modifier,
-	const float *view,
+	const float *viewmatrix,
 	const float *proj,
+	const float *proj_raw,
 	const glm::vec3 *campos,
 	const float3 *dL_dmean2D,
 	glm::vec3 *dL_dmeans,
 	float *dL_dcolor,
 	float *dL_ddepth,
 	float *dL_dcov3D,
-	glm::vec3 *dL_dnorm3D,
 	float *dL_dsh,
 	glm::vec3 *dL_dscale,
-	glm::vec4 *dL_drot)
+	glm::vec4 *dL_drot,
+	float *dL_dtau)
 {
 	auto idx = cg::this_grid().thread_rank();
 	if (idx >= P || !(radii[idx] > 0))
@@ -714,14 +779,80 @@ __global__ void preprocesssphericalCUDA(
 	// of cov2D and following SH conversion also affects it.
 	dL_dmeans[idx] += dL_dmean;
 
+	float alpha = 1.0f * m_w;
+	float beta = -m_hom.x * m_w * m_w;
+	float gamma = -m_hom.y * m_w * m_w;
+
+	float a = proj_raw[0];
+	float b = proj_raw[5];
+	float c = proj_raw[10];
+	float d = proj_raw[14];
+	float e = proj_raw[11];
+
+	SE3 T_CW(viewmatrix);
+	mat33 R = T_CW.R().data();
+	mat33 RT = R.transpose();
+	float3 t = T_CW.t();
+	float3 p_C = T_CW * m;
+	mat33 dp_C_d_rho = mat33::identity();
+	mat33 dp_C_d_theta = -mat33::skew_symmetric(p_C);
+
+	float3 d_proj_dp_C1 = make_float3(alpha * a, 0.f, beta * e);
+	float3 d_proj_dp_C2 = make_float3(0.f, alpha * b, gamma * e);
+
+	float3 d_proj_dp_C1_d_rho = dp_C_d_rho.transpose() * d_proj_dp_C1; // x.T A = A.T x
+	float3 d_proj_dp_C2_d_rho = dp_C_d_rho.transpose() * d_proj_dp_C2;
+	float3 d_proj_dp_C1_d_theta = dp_C_d_theta.transpose() * d_proj_dp_C1;
+	float3 d_proj_dp_C2_d_theta = dp_C_d_theta.transpose() * d_proj_dp_C2;
+
+	float2 dmean2D_dtau[6];
+	dmean2D_dtau[0].x = d_proj_dp_C1_d_rho.x;
+	dmean2D_dtau[1].x = d_proj_dp_C1_d_rho.y;
+	dmean2D_dtau[2].x = d_proj_dp_C1_d_rho.z;
+	dmean2D_dtau[3].x = d_proj_dp_C1_d_theta.x;
+	dmean2D_dtau[4].x = d_proj_dp_C1_d_theta.y;
+	dmean2D_dtau[5].x = d_proj_dp_C1_d_theta.z;
+
+	dmean2D_dtau[0].y = d_proj_dp_C2_d_rho.x;
+	dmean2D_dtau[1].y = d_proj_dp_C2_d_rho.y;
+	dmean2D_dtau[2].y = d_proj_dp_C2_d_rho.z;
+	dmean2D_dtau[3].y = d_proj_dp_C2_d_theta.x;
+	dmean2D_dtau[4].y = d_proj_dp_C2_d_theta.y;
+	dmean2D_dtau[5].y = d_proj_dp_C2_d_theta.z;
+
+	float dL_dt[6];
+	for (int i = 0; i < 6; i++)
+	{
+		dL_dt[i] = dL_dmean2D[idx].x * dmean2D_dtau[i].x + dL_dmean2D[idx].y * dmean2D_dtau[i].y;
+	}
+	for (int i = 0; i < 6; i++)
+	{
+		dL_dtau[6 * idx + i] += dL_dt[i];
+	}
+
+	// Compute gradient update due to computing depths
+	// p_orig = m
+	// p_view = transformPoint4x3(p_orig, viewmatrix);
+	// depth = p_view.z;
+	float dL_dpCz = dL_ddepth[idx];
+	dL_dmeans[idx].x += dL_dpCz * viewmatrix[2];
+	dL_dmeans[idx].y += dL_dpCz * viewmatrix[6];
+	dL_dmeans[idx].z += dL_dpCz * viewmatrix[10];
+
+	for (int i = 0; i < 3; i++)
+	{
+		float3 c_rho = dp_C_d_rho.cols[i];
+		float3 c_theta = dp_C_d_theta.cols[i];
+		dL_dtau[6 * idx + i] += dL_dpCz * c_rho.z;
+		dL_dtau[6 * idx + i + 3] += dL_dpCz * c_theta.z;
+	}
+
 	// Compute gradient updates due to computing colors from SHs
 	if (shs)
-		computeColorFromSH(idx, D, M, (glm::vec3 *)means, *campos, shs, clamped, (glm::vec3 *)dL_dcolor, (glm::vec3 *)dL_dmeans, (glm::vec3 *)dL_dsh);
+		computeColorFromSH(idx, D, M, (glm::vec3 *)means, *campos, shs, clamped, (glm::vec3 *)dL_dcolor, (glm::vec3 *)dL_dmeans, (glm::vec3 *)dL_dsh, dL_dtau);
 	// Compute gradient updates due to computing covariance from scale/rotation
 	if (scales)
 		computeCov3D(idx, scales[idx], scale_modifier, rotations[idx], dL_dcov3D, dL_dscale, dL_drot);
-	if (!is_norm3Ds_precomp)
-		computeNorm3D(idx, scales[idx], rotations[idx], norm3Ds[idx], dL_dnorm3D[idx], dL_dscale, dL_drot);
 }
 
 template <typename T>
@@ -1063,12 +1194,11 @@ void BACKWARD::preprocessspherical(
 	const glm::vec4 *rotations,
 	const float scale_modifier,
 	const float *cov3Ds,
-	const glm::vec3 *norm3Ds,
-	bool is_norm3Ds_precomp,
 	const float *viewmatrix,
 	const float *projmatrix,
-	const float focal_x, const float focal_y,
-	const float tan_fovx, const float tan_fovy,
+	const float *projmatrix_raw,
+	const float focal_x, float focal_y,
+	const float tan_fovx, float tan_fovy,
 	const glm::vec3 *campos,
 	const float3 *dL_dmean2D,
 	const float *dL_dconic,
@@ -1076,10 +1206,10 @@ void BACKWARD::preprocessspherical(
 	float *dL_dcolor,
 	float *dL_ddepth,
 	float *dL_dcov3D,
-	glm::vec3 *dL_dnorm3D,
 	float *dL_dsh,
 	glm::vec3 *dL_dscale,
-	glm::vec4 *dL_drot)
+	glm::vec4 *dL_drot,
+	float *dL_dtau)
 {
 	// Propagate gradients for the path of 2D conic matrix computation.
 	// Somewhat long, thus it is its own kernel rather than being part of
@@ -1097,7 +1227,8 @@ void BACKWARD::preprocessspherical(
 		viewmatrix,
 		dL_dconic,
 		(float3 *)dL_dmean3D,
-		dL_dcov3D);
+		dL_dcov3D,
+		dL_dtau);
 
 	// Propagate gradients for remaining steps: finish 3D mean gradients,
 	// propagate color gradients to SH (if desireD), propagate 3D covariance
@@ -1107,24 +1238,23 @@ void BACKWARD::preprocessspherical(
 		(float3 *)means3D,
 		radii,
 		shs,
-		(glm::vec3 *)norm3Ds,
-		is_norm3Ds_precomp,
 		clamped,
 		(glm::vec3 *)scales,
 		(glm::vec4 *)rotations,
 		scale_modifier,
 		viewmatrix,
 		projmatrix,
+		projmatrix_raw,
 		campos,
 		(float3 *)dL_dmean2D,
 		(glm::vec3 *)dL_dmean3D,
 		dL_dcolor,
 		dL_ddepth,
 		dL_dcov3D,
-		(glm::vec3 *)dL_dnorm3D,
 		dL_dsh,
 		dL_dscale,
-		dL_drot);
+		dL_drot,
+		dL_dtau);
 }
 
 void BACKWARD::render(
