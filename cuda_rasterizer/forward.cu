@@ -338,7 +338,7 @@ __global__ void preprocesssphericalCUDA(int P, int D, int M,
 	if (!in_sphere(idx, orig_points, viewmatrix, projmatrix, cam_pos, prefiltered, p_view))
 		return;
 
-	float3 p_proj = {p_view.x, p_view.y, 2.0 * (p_view.z - 0.2f) / (100.0f - 0.2f) - 1.0};
+	float3 p_proj = {p_view.x, p_view.y, 2.0f * (p_view.z - 0.2f) / (100.0f - 0.2f) - 1.0f};
 
 	// If 3D covariance matrix is precomputed, use it, otherwise compute
 	// from scaling and rotation parameters.

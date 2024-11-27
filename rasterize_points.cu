@@ -304,7 +304,7 @@ RasterizeGaussiansBackwardCUDA(
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
-RasterizeGaussiansSphericalBackwardCUDA(
+RasterizeGaussiansBackwardSphericalCUDA(
     const torch::Tensor &background,
     const torch::Tensor &means3D,
     const torch::Tensor &radii,
