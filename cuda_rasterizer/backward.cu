@@ -369,14 +369,25 @@ __global__ void computesphericalCov2DCUDA(int P,
 	float3 dL_dconic = {dL_dconics[4 * idx], dL_dconics[4 * idx + 1], dL_dconics[4 * idx + 3]};
 	float3 t = transformPoint4x3(mean, view_matrix);
 
-	float t_length = sqrtf(t.x * t.x + t.y * t.y + t.z * t.z);
+	const float limx = 1.3f * tan_fovx;
+	const float limy = 1.3f * tan_fovy;
+	const float txtz = t.x / t.z;
+	const float tytz = t.y / t.z;
+	t.x = min(limx, max(-limx, txtz)) * t.z;
+	t.y = min(limy, max(-limy, tytz)) * t.z;
 
-	float3 t_unit_focal = {0.0f, 0.0f, t_length};
+	const float x_grad_mul = txtz < -limx || txtz > limx ? 0 : 1;
+	const float y_grad_mul = tytz < -limy || tytz > limy ? 0 : 1;
+
+	// Convert to spherical coordinates
+	float r = sqrtf(t.x * t.x + t.y * t.y + t.z * t.z);
+	float theta = atan2f(t.y, t.x); // Azimuth
+	float phi = acosf(t.z / r);		// Inclination
 
 	glm::mat3 J = glm::mat3(
-		h_x / t_unit_focal.z, 0.0f, -(h_x * t_unit_focal.x) / (t_unit_focal.z * t_unit_focal.z),
-		0.0f, h_x / t_unit_focal.z, -(h_x * t_unit_focal.y) / (t_unit_focal.z * t_unit_focal.z),
-		0, 0, 0);
+		h_x / t.z, 0.0f, -(h_x * t.x) / (t.z * t.z),
+		0.0f, h_y / t.z, -(h_y * t.y) / (t.z * t.z),
+		0.0f, 0.0f, 0.0f);
 
 	glm::mat3 W = glm::mat3(
 		view_matrix[0], view_matrix[4], view_matrix[8],
@@ -431,110 +442,64 @@ __global__ void computesphericalCov2DCUDA(int P,
 			dL_dcov[6 * idx + i] = 0;
 	}
 
-	// Gradients of loss w.r.t. upper 2x3 portion of intermediate matrix T
-	// cov2D = transpose(T) * transpose(Vrk) * T;
-	float dL_dT00 = 2 * (T[0][0] * Vrk[0][0] + T[0][1] * Vrk[0][1] + T[0][2] * Vrk[0][2]) * dL_da +
-					(T[1][0] * Vrk[0][0] + T[1][1] * Vrk[0][1] + T[1][2] * Vrk[0][2]) * dL_db;
-	float dL_dT01 = 2 * (T[0][0] * Vrk[1][0] + T[0][1] * Vrk[1][1] + T[0][2] * Vrk[1][2]) * dL_da +
-					(T[1][0] * Vrk[1][0] + T[1][1] * Vrk[1][1] + T[1][2] * Vrk[1][2]) * dL_db;
-	float dL_dT02 = 2 * (T[0][0] * Vrk[2][0] + T[0][1] * Vrk[2][1] + T[0][2] * Vrk[2][2]) * dL_da +
-					(T[1][0] * Vrk[2][0] + T[1][1] * Vrk[2][1] + T[1][2] * Vrk[2][2]) * dL_db;
-	float dL_dT10 = 2 * (T[1][0] * Vrk[0][0] + T[1][1] * Vrk[0][1] + T[1][2] * Vrk[0][2]) * dL_dc +
-					(T[0][0] * Vrk[0][0] + T[0][1] * Vrk[0][1] + T[0][2] * Vrk[0][2]) * dL_db;
-	float dL_dT11 = 2 * (T[1][0] * Vrk[1][0] + T[1][1] * Vrk[1][1] + T[1][2] * Vrk[1][2]) * dL_dc +
-					(T[0][0] * Vrk[1][0] + T[0][1] * Vrk[1][1] + T[0][2] * Vrk[1][2]) * dL_db;
-	float dL_dT12 = 2 * (T[1][0] * Vrk[2][0] + T[1][1] * Vrk[2][1] + T[1][2] * Vrk[2][2]) * dL_dc +
-					(T[0][0] * Vrk[2][0] + T[0][1] * Vrk[2][1] + T[0][2] * Vrk[2][2]) * dL_db;
+	// Gradients for spherical parameters
+	float dL_dr = dL_da * (t.x / r) + dL_dc * (t.y / r) + dL_dconic.z * (t.z / r);
+	float dL_dtheta = dL_dconic.x * -sin(theta) + dL_dconic.y * cos(theta);
+	float dL_dphi = -dL_dconic.z * sin(phi);
 
-	// Gradients of loss w.r.t. upper 3x2 non-zero entries of Jacobian matrix
-	// T = W * J
-	float dL_dJ00 = W[0][0] * dL_dT00 + W[0][1] * dL_dT01 + W[0][2] * dL_dT02;
-	float dL_dJ02 = W[2][0] * dL_dT00 + W[2][1] * dL_dT01 + W[2][2] * dL_dT02;
-	float dL_dJ11 = W[1][0] * dL_dT10 + W[1][1] * dL_dT11 + W[1][2] * dL_dT12;
-	float dL_dJ12 = W[2][0] * dL_dT10 + W[2][1] * dL_dT11 + W[2][2] * dL_dT12;
+	// Map spherical gradients to 3D space
+	float3 dL_dmean_spherical = {
+		dL_dr * sin(phi) * cos(theta),
+		dL_dr * sin(phi) * sin(theta),
+		dL_dr * cos(phi)};
 
-	float tz = 1.f / t.z;
-	float tz2 = tz * tz;
-	float tz3 = tz2 * tz;
+	// Add regularized mean gradients
+	dL_dmeans[idx] += dL_dmean_spherical;
 
-	// Gradients of loss w.r.t. transformed Gaussian mean t
-	float dL_dtx = -h_x * tz2 * dL_dJ02;
-	float dL_dty = -h_y * tz2 * dL_dJ12;
-	float dL_dtz = -h_x * tz2 * dL_dJ00 - h_y * tz2 * dL_dJ11 + (2 * h_x * t.x) * tz3 * dL_dJ02 + (2 * h_y * t.y) * tz3 * dL_dJ12;
+	// Include SE(3) adjustments (as in original kernel)
+	float3 dL_dmean_cartesian = {
+		dL_dmeans[idx].x * x_grad_mul,
+		dL_dmeans[idx].y * y_grad_mul,
+		dL_dmeans[idx].z};
 
-	SE3 T_CW(view_matrix);
-	mat33 R = T_CW.R().data();
-	mat33 RT = R.transpose();
-	float3 t_ = T_CW.t();
-	mat33 dpC_drho = mat33::identity();
-	mat33 dpC_dtheta = -mat33::skew_symmetric(t);
-	float dL_dt[6];
-	for (int i = 0; i < 3; i++)
-	{
-		float3 c_rho = dpC_drho.cols[i];
-		float3 c_theta = dpC_dtheta.cols[i];
-		dL_dt[i] = dL_dtx * c_rho.x + dL_dty * c_rho.y + dL_dtz * c_rho.z;
-		dL_dt[i + 3] = dL_dtx * c_theta.x + dL_dty * c_theta.y + dL_dtz * c_theta.z;
-	}
-	for (int i = 0; i < 6; i++)
-	{
-		dL_dtau[6 * idx + i] += dL_dt[i];
-	}
+	// Apply the Jacobian of the SE(3) transformation matrix to map the gradient back to the global frame
+	glm::mat3 R = glm::mat3(
+		view_matrix[0], view_matrix[4], view_matrix[8],
+		view_matrix[1], view_matrix[5], view_matrix[9],
+		view_matrix[2], view_matrix[6], view_matrix[10]);
 
-	// Account for transformation of mean to t
-	// t = transformPoint4x3(mean, view_matrix);
-	float3 dL_dmean = transformVec4x3Transpose({dL_dtx, dL_dty, dL_dtz}, view_matrix);
+	float3 dL_dmean_global = {
+		R[0][0] * dL_dmean_cartesian.x + R[0][1] * dL_dmean_cartesian.y + R[0][2] * dL_dmean_cartesian.z,
+		R[1][0] * dL_dmean_cartesian.x + R[1][1] * dL_dmean_cartesian.y + R[1][2] * dL_dmean_cartesian.z,
+		R[2][0] * dL_dmean_cartesian.x + R[2][1] * dL_dmean_cartesian.y + R[2][2] * dL_dmean_cartesian.z};
 
-	// Gradients of loss w.r.t. Gaussian means, but only the portion
-	// that is caused because the mean affects the covariance matrix.
-	// Additional mean gradient is accumulated in BACKWARD::preprocess.
-	dL_dmeans[idx] = dL_dmean;
+	dL_dmeans[idx] = dL_dmean_global;
 
-	float dL_dW00 = J[0][0] * dL_dT00;
-	float dL_dW01 = J[0][0] * dL_dT01;
-	float dL_dW02 = J[0][0] * dL_dT02;
-	float dL_dW10 = J[1][1] * dL_dT10;
-	float dL_dW11 = J[1][1] * dL_dT11;
-	float dL_dW12 = J[1][1] * dL_dT12;
-	float dL_dW20 = J[0][2] * dL_dT00 + J[1][2] * dL_dT10;
-	float dL_dW21 = J[0][2] * dL_dT01 + J[1][2] * dL_dT11;
-	float dL_dW22 = J[0][2] * dL_dT02 + J[1][2] * dL_dT12;
+	// Gradients for SE(3) parameters (dL_dtau)
+	// Compute gradient contributions for translation (dL_dt) and rotation (dL_domega)
+	float3 dL_dt = {
+		dL_dmeans[idx].x,
+		dL_dmeans[idx].y,
+		dL_dmeans[idx].z};
 
-	float3 c1 = R.cols[0];
-	float3 c2 = R.cols[1];
-	float3 c3 = R.cols[2];
+	// Rotation gradient (dL_domega) calculation using skew-symmetric matrix of transformed mean
+	glm::mat3 skew_t = glm::mat3(
+		0.0f, -t.z, t.y,
+		t.z, 0.0f, -t.x,
+		-t.y, t.x, 0.0f);
 
-	float dL_dW_data[9];
-	dL_dW_data[0] = dL_dW00;
-	dL_dW_data[3] = dL_dW01;
-	dL_dW_data[6] = dL_dW02;
-	dL_dW_data[1] = dL_dW10;
-	dL_dW_data[4] = dL_dW11;
-	dL_dW_data[7] = dL_dW12;
-	dL_dW_data[2] = dL_dW20;
-	dL_dW_data[5] = dL_dW21;
-	dL_dW_data[8] = dL_dW22;
+	float3 dL_domega = {
+		skew_t[0][0] * dL_dmean_cartesian.x + skew_t[0][1] * dL_dmean_cartesian.y + skew_t[0][2] * dL_dmean_cartesian.z,
+		skew_t[1][0] * dL_dmean_cartesian.x + skew_t[1][1] * dL_dmean_cartesian.y + skew_t[1][2] * dL_dmean_cartesian.z,
+		skew_t[2][0] * dL_dmean_cartesian.x + skew_t[2][1] * dL_dmean_cartesian.y + skew_t[2][2] * dL_dmean_cartesian.z};
 
-	mat33 dL_dW(dL_dW_data);
-	float3 dL_dWc1 = dL_dW.cols[0];
-	float3 dL_dWc2 = dL_dW.cols[1];
-	float3 dL_dWc3 = dL_dW.cols[2];
-
-	mat33 n_W1_x = -mat33::skew_symmetric(c1);
-	mat33 n_W2_x = -mat33::skew_symmetric(c2);
-	mat33 n_W3_x = -mat33::skew_symmetric(c3);
-
-	float3 dL_dtheta = {};
-	dL_dtheta.x = dot(dL_dWc1, n_W1_x.cols[0]) + dot(dL_dWc2, n_W2_x.cols[0]) +
-				  dot(dL_dWc3, n_W3_x.cols[0]);
-	dL_dtheta.y = dot(dL_dWc1, n_W1_x.cols[1]) + dot(dL_dWc2, n_W2_x.cols[1]) +
-				  dot(dL_dWc3, n_W3_x.cols[1]);
-	dL_dtheta.z = dot(dL_dWc1, n_W1_x.cols[2]) + dot(dL_dWc2, n_W2_x.cols[2]) +
-				  dot(dL_dWc3, n_W3_x.cols[2]);
-
-	dL_dtau[6 * idx + 3] += dL_dtheta.x;
-	dL_dtau[6 * idx + 4] += dL_dtheta.y;
-	dL_dtau[6 * idx + 5] += dL_dtheta.z;
+	// Store SE(3) gradients in the shared output buffer
+	dL_dtau[6 * idx + 0] = dL_dt.x;
+	dL_dtau[6 * idx + 1] = dL_dt.y;
+	dL_dtau[6 * idx + 2] = dL_dt.z;
+	dL_dtau[6 * idx + 3] = dL_domega.x;
+	dL_dtau[6 * idx + 4] = dL_domega.y;
+	dL_dtau[6 * idx + 5] = dL_domega.z;
 }
 
 // Backward pass for the conversion of scale and rotation to a
@@ -762,22 +727,9 @@ __global__ void preprocesssphericalCUDA(
 
 	float3 m = means[idx];
 
-	// Taking care of gradients from the screenspace points
+	// Step 1: Homogeneous projection
 	float4 m_hom = transformPoint4x4(m, proj);
-	float m_w = 1.0f / (m_hom.w + 0.0000001f);
-
-	// Compute loss gradient w.r.t. 3D means due to gradients of 2D means
-	// from rendering procedure
-	glm::vec3 dL_dmean;
-	float mul1 = (proj[0] * m.x + proj[4] * m.y + proj[8] * m.z + proj[12]) * m_w * m_w;
-	float mul2 = (proj[1] * m.x + proj[5] * m.y + proj[9] * m.z + proj[13]) * m_w * m_w;
-	dL_dmean.x = (proj[0] * m_w - proj[3] * mul1) * dL_dmean2D[idx].x + (proj[1] * m_w - proj[3] * mul2) * dL_dmean2D[idx].y;
-	dL_dmean.y = (proj[4] * m_w - proj[7] * mul1) * dL_dmean2D[idx].x + (proj[5] * m_w - proj[7] * mul2) * dL_dmean2D[idx].y;
-	dL_dmean.z = (proj[8] * m_w - proj[11] * mul1) * dL_dmean2D[idx].x + (proj[9] * m_w - proj[11] * mul2) * dL_dmean2D[idx].y;
-
-	// That's the second part of the mean gradient. Previous computation
-	// of cov2D and following SH conversion also affects it.
-	dL_dmeans[idx] += dL_dmean;
+	float m_w = 1.0f / (m_hom.w + 1e-7f);
 
 	float alpha = 1.0f * m_w;
 	float beta = -m_hom.x * m_w * m_w;
@@ -785,22 +737,22 @@ __global__ void preprocesssphericalCUDA(
 
 	float a = proj_raw[0];
 	float b = proj_raw[5];
-	float c = proj_raw[10];
-	float d = proj_raw[14];
 	float e = proj_raw[11];
 
+	float3 d_proj_dp_C1 = make_float3(alpha * a, 0.f, beta * e);
+	float3 d_proj_dp_C2 = make_float3(0.f, alpha * b, gamma * e);
+
+	// Step 2: SE(3) transformations
 	SE3 T_CW(viewmatrix);
 	mat33 R = T_CW.R().data();
 	mat33 RT = R.transpose();
 	float3 t = T_CW.t();
 	float3 p_C = T_CW * m;
+
 	mat33 dp_C_d_rho = mat33::identity();
 	mat33 dp_C_d_theta = -mat33::skew_symmetric(p_C);
 
-	float3 d_proj_dp_C1 = make_float3(alpha * a, 0.f, beta * e);
-	float3 d_proj_dp_C2 = make_float3(0.f, alpha * b, gamma * e);
-
-	float3 d_proj_dp_C1_d_rho = dp_C_d_rho.transpose() * d_proj_dp_C1; // x.T A = A.T x
+	float3 d_proj_dp_C1_d_rho = dp_C_d_rho.transpose() * d_proj_dp_C1;
 	float3 d_proj_dp_C2_d_rho = dp_C_d_rho.transpose() * d_proj_dp_C2;
 	float3 d_proj_dp_C1_d_theta = dp_C_d_theta.transpose() * d_proj_dp_C1;
 	float3 d_proj_dp_C2_d_theta = dp_C_d_theta.transpose() * d_proj_dp_C2;
@@ -820,6 +772,7 @@ __global__ void preprocesssphericalCUDA(
 	dmean2D_dtau[4].y = d_proj_dp_C2_d_theta.y;
 	dmean2D_dtau[5].y = d_proj_dp_C2_d_theta.z;
 
+	// Step 3: Compute gradient w.r.t. tau
 	float dL_dt[6];
 	for (int i = 0; i < 6; i++)
 	{
@@ -830,10 +783,7 @@ __global__ void preprocesssphericalCUDA(
 		dL_dtau[6 * idx + i] += dL_dt[i];
 	}
 
-	// Compute gradient update due to computing depths
-	// p_orig = m
-	// p_view = transformPoint4x3(p_orig, viewmatrix);
-	// depth = p_view.z;
+	// Step 4: Depth gradient update
 	float dL_dpCz = dL_ddepth[idx];
 	dL_dmeans[idx].x += dL_dpCz * viewmatrix[2];
 	dL_dmeans[idx].y += dL_dpCz * viewmatrix[6];
@@ -847,10 +797,13 @@ __global__ void preprocesssphericalCUDA(
 		dL_dtau[6 * idx + i + 3] += dL_dpCz * c_theta.z;
 	}
 
-	// Compute gradient updates due to computing colors from SHs
+	// Step 5: Spherical harmonics gradient updates
 	if (shs)
-		computeColorFromSH(idx, D, M, (glm::vec3 *)means, *campos, shs, clamped, (glm::vec3 *)dL_dcolor, (glm::vec3 *)dL_dmeans, (glm::vec3 *)dL_dsh, dL_dtau);
-	// Compute gradient updates due to computing covariance from scale/rotation
+		computeColorFromSH(idx, D, M, (glm::vec3 *)means, *campos, shs, clamped,
+						   (glm::vec3 *)dL_dcolor, (glm::vec3 *)dL_dmeans,
+						   (glm::vec3 *)dL_dsh, dL_dtau);
+
+	// Step 6: Covariance gradient updates
 	if (scales)
 		computeCov3D(idx, scales[idx], scale_modifier, rotations[idx], dL_dcov3D, dL_dscale, dL_drot);
 }
