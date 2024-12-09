@@ -122,7 +122,7 @@ __device__ float3 computesphericalCov2D(const float3 &mean, float focal_x, float
 	// Additionally considers aspect / scaling of viewport.
 	// Transposes used to account for row-/column-major conventions.
 
-	float3 t = transformPoint4x3(mean, viewmatrix);
+	float3 t = transformPoint4x3Spherical(mean, viewmatrix);
 
 	float t_length = sqrtf(t.x * t.x + t.y * t.y + t.z * t.z);
 
