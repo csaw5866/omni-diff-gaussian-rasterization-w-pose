@@ -61,18 +61,6 @@ __forceinline__ __device__ float3 transformPoint4x3(const float3 &p, const float
 	return transformed;
 }
 
-__forceinline__ __device__ float3 transformPoint4x3Spherical(const float3 &p, const float *matrix)
-{
-    float3 swapped_p = { -p.x, -p.z, -p.y };
-
-    float3 transformed = {
-        matrix[0] * swapped_p.x + matrix[4] * swapped_p.y + matrix[8] * swapped_p.z + matrix[12],
-        matrix[1] * swapped_p.x + matrix[5] * swapped_p.y + matrix[9] * swapped_p.z + matrix[13],
-        matrix[2] * swapped_p.x + matrix[6] * swapped_p.y + matrix[10] * swapped_p.z + matrix[14],
-    };
-    return transformed;
-}
-
 __forceinline__ __device__ float4 transformPoint4x4(const float3 &p, const float *matrix)
 {
 	float4 transformed = {
