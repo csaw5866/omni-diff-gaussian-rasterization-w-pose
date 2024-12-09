@@ -367,7 +367,7 @@ __global__ void computesphericalCov2DCUDA(int P,
 	// intermediate forward results needed in the backward.
 	float3 mean = means[idx];
 	float3 dL_dconic = {dL_dconics[4 * idx], dL_dconics[4 * idx + 1], dL_dconics[4 * idx + 3]};
-	float3 t = transformPoint4x3Spherical(mean, view_matrix);
+	float3 t = transformPoint4x3(mean, view_matrix);
 
 	float t_length = sqrtf(t.x * t.x + t.y * t.y + t.z * t.z);
 

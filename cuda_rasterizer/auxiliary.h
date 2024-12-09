@@ -61,25 +61,14 @@ __forceinline__ __device__ float3 transformPoint4x3(const float3 &p, const float
 	return transformed;
 }
 
-__forceinline__ __device__ float3 transformPoint4x3Spherical(const float3 &p, const float *matrix)
-{
-    float3 swapped_p = { -p.x, -p.z, -p.y };
-
-    float3 transformed = {
-        matrix[0] * swapped_p.x + matrix[4] * swapped_p.y + matrix[8] * swapped_p.z + matrix[12],
-        matrix[1] * swapped_p.x + matrix[5] * swapped_p.y + matrix[9] * swapped_p.z + matrix[13],
-        matrix[2] * swapped_p.x + matrix[6] * swapped_p.y + matrix[10] * swapped_p.z + matrix[14],
-    };
-    return transformed;
-}
-
 __forceinline__ __device__ float4 transformPoint4x4(const float3 &p, const float *matrix)
 {
+	float3 p_transformed = {-p.x, -p.z, -p.y};
 	float4 transformed = {
-		matrix[0] * p.x + matrix[4] * p.y + matrix[8] * p.z + matrix[12],
-		matrix[1] * p.x + matrix[5] * p.y + matrix[9] * p.z + matrix[13],
-		matrix[2] * p.x + matrix[6] * p.y + matrix[10] * p.z + matrix[14],
-		matrix[3] * p.x + matrix[7] * p.y + matrix[11] * p.z + matrix[15]};
+		matrix[0] * p_transformed.x + matrix[4] * p_transformed.y + matrix[8] * p_transformed.z + matrix[12],
+		matrix[1] * p_transformed.x + matrix[5] * p_transformed.y + matrix[9] * p_transformed.z + matrix[13],
+		matrix[2] * p_transformed.x + matrix[6] * p_transformed.y + matrix[10] * p_transformed.z + matrix[14],
+		matrix[3] * p_transformed.x + matrix[7] * p_transformed.y + matrix[11] * p_transformed.z + matrix[15]};
 	return transformed;
 }
 
